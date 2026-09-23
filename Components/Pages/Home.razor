@@ -1,0 +1,130 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.Components.Authorization;
+@inject HttpClient Http;
+@inject NavigationManager Navigation
+@using System.ComponentModel.DataAnnotations;
+@using System.IO;
+<PageTitle>Home</PageTitle>
+
+<h1>Welcome to the ledger app!</h1>
+
+<AuthorizeView>
+    <Authorized Context="auth">
+        <h2>Hello, <strong>@auth.User.Identity?.Name</strong>!</h2>
+        
+    <EditForm Model="@invoiceDto" OnValidSubmit="HandleValidSubmit" FormName="uploadInvoice">
+        <AntiforgeryToken />
+        <DataAnnotationsValidator /> 
+
+
+        <ValidationSummary />
+
+
+        <div class="mb-3">
+            <label for="name" class="form-label">Name of the invoice</label>
+            <input type="text" class="form-control" id="name" placeholder="name of the invoice" @bind-value="invoiceDto.Name">
+            <ValidationMessage For="@(() => invoiceDto.Name)" class="text-danger" />
+        </div>
+            <div class="form-check mb-3">
+                <InputFile OnChange="LoadFiles" accept=".pdf,.png,.jpg,.jpeg" />
+        </div>
+        <div class="form-check mb-3">
+            <input type="checkbox" class="form-check-input" id="shouldSendEmail" @bind-value="invoiceDto.sendEmail" >
+            <label for="shouldSendEmail">Should send email?</label>
+        </div>
+
+        <div class="form-check mb-3">
+            <input type="checkbox" class="form-check-input" id="shouldSendSms" @bind-value="invoiceDto.sendSMS">
+            <label for="shouldSendSms">Should send sms?</label>
+        </div>
+        <div class="mb-3">
+            <label for="notify" class="form-label">Notify me - how many days before?</label>
+            <input type="range" class="form-range" id="notify" min="1" max="15" step="1" @bind-value="invoiceDto.notifyDaysBefore">
+            <output for="notify" id="notifyValue">@invoiceDto.notifyDaysBefore</output>
+        </div>
+
+        <div class="mb-3">
+            <label for="paidAt">PaidAt date</label>
+            <input id="paidAt" class="form-control" type="date" @bind-value="invoiceDto.PaidAt"/>
+        </div>
+        
+        <button class="btn btn-primary" type="submit" value="Submit" disabled="@isSubmitting">
+                @if (isSubmitting)
+                {
+                    <span>Saving...</span>
+                } else
+                {
+                    <span>Save invoice</span>
+                }
+        </button>
+
+    </EditForm>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger mt-3">@errorMessage</div>
+        }
+    </Authorized>
+    <NotAuthorized>
+        <p>You are not logged in.</p>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private Task LoadFiles(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        return Task.CompletedTask;
+    }
+
+    private InvoiceDto invoiceDto = new()
+    {
+        notifyDaysBefore = 1
+    };
+    private IBrowserFile? selectedFile;
+    private bool isSubmitting = false;
+    private string? errorMessage;
+
+    private async Task HandleValidSubmit()
+    {
+        isSubmitting = true;
+        errorMessage = null;
+
+        try
+        {
+            invoiceDto.CreatedAt = DateOnly.FromDateTime(DateTime.UtcNow);
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(invoiceDto.Name), nameof(InvoiceDto.Name));
+            form.Add(new StringContent(invoiceDto.notifyDaysBefore.ToString()), nameof(InvoiceDto.notifyDaysBefore));
+            form.Add(new StringContent(invoiceDto.sendEmail.ToString()), nameof(InvoiceDto.sendEmail));
+            form.Add(new StringContent(invoiceDto.sendSMS.ToString()), nameof(InvoiceDto.sendSMS));
+            form.Add(new StringContent(invoiceDto.PaidAt.ToString("yyyy-MM-dd")), nameof(InvoiceDto.PaidAt));
+            form.Add(new StringContent(invoiceDto.CreatedAt.ToString("yyyy-MM-dd")), nameof(InvoiceDto.CreatedAt));
+
+            if (selectedFile is not null)
+            {
+                var fileStream = selectedFile.OpenReadStream(15 * 1024 * 1024);
+                var fileContent = new StreamContent(fileStream);
+                form.Add(fileContent, nameof(InvoiceDto.uploadedInvoice), selectedFile.Name);
+            }
+
+            var response = await Http.PostAsync(
+                new Uri(new Uri(Navigation.BaseUri), "api/form/invoice"), form);
+
+            if (response.IsSuccessStatusCode)
+            {
+                Navigation.NavigateTo("/");
+                return;
+            }
+
+            errorMessage = $"Server error ({(int)response.StatusCode}): {await response.Content.ReadAsStringAsync()}";
+        } catch (Exception ex)
+        {
+            errorMessage = $"An error occurred: {ex.Message}";
+        } finally {
+            isSubmitting = false;
+        }
+    }
+
+}
+
