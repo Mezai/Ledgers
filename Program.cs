@@ -11,6 +11,8 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.AddHttpClient();
+builder.Services.AddSignalR(options =>
+    options.MaximumReceiveMessageSize = 16 * 1024 * 1024);
 
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 

@@ -1,6 +1,6 @@
 ﻿@page "/"
 @using Microsoft.AspNetCore.Components.Authorization;
-@inject HttpClient Http;
+@inject IJSRuntime JS
 @inject NavigationManager Navigation
 @using System.ComponentModel.DataAnnotations;
 @using System.IO;
@@ -18,7 +18,11 @@
 
 
         <ValidationSummary />
-
+        @if (string.IsNullOrEmpty(errorMessage) && success) {
+            <div class="alert alert-secondary" role="alert">
+             Successfully registered invoice
+            </div>
+        }
 
         <div class="mb-3">
             <label for="name" class="form-label">Name of the invoice</label>
@@ -26,7 +30,7 @@
             <ValidationMessage For="@(() => invoiceDto.Name)" class="text-danger" />
         </div>
             <div class="form-check mb-3">
-                <InputFile OnChange="LoadFiles" accept=".pdf,.png,.jpg,.jpeg" />
+                <InputFile id="invoiceFile" accept=".pdf,.png,.jpg,.jpeg" />
         </div>
         <div class="form-check mb-3">
             <input type="checkbox" class="form-check-input" id="shouldSendEmail" @bind-value="invoiceDto.sendEmail" >
@@ -71,18 +75,13 @@
 </AuthorizeView>
 
 @code {
-    private Task LoadFiles(InputFileChangeEventArgs e)
-    {
-        selectedFile = e.File;
-        return Task.CompletedTask;
-    }
-
     private InvoiceDto invoiceDto = new()
     {
         notifyDaysBefore = 1
     };
-    private IBrowserFile? selectedFile;
     private bool isSubmitting = false;
+
+    private bool success = false;
     private string? errorMessage;
 
     private async Task HandleValidSubmit()
@@ -93,37 +92,36 @@
         try
         {
             invoiceDto.CreatedAt = DateOnly.FromDateTime(DateTime.UtcNow);
-            using var form = new MultipartFormDataContent();
-            form.Add(new StringContent(invoiceDto.Name), nameof(InvoiceDto.Name));
-            form.Add(new StringContent(invoiceDto.notifyDaysBefore.ToString()), nameof(InvoiceDto.notifyDaysBefore));
-            form.Add(new StringContent(invoiceDto.sendEmail.ToString()), nameof(InvoiceDto.sendEmail));
-            form.Add(new StringContent(invoiceDto.sendSMS.ToString()), nameof(InvoiceDto.sendSMS));
-            form.Add(new StringContent(invoiceDto.PaidAt.ToString("yyyy-MM-dd")), nameof(InvoiceDto.PaidAt));
-            form.Add(new StringContent(invoiceDto.CreatedAt.ToString("yyyy-MM-dd")), nameof(InvoiceDto.CreatedAt));
-
-            if (selectedFile is not null)
+            var result = await JS.InvokeAsync<UploadResult>("uploadInvoice", new
             {
-                var fileStream = selectedFile.OpenReadStream(15 * 1024 * 1024);
-                var fileContent = new StreamContent(fileStream);
-                form.Add(fileContent, nameof(InvoiceDto.uploadedInvoice), selectedFile.Name);
-            }
+                name = invoiceDto.Name,
+                notifyDaysBefore = invoiceDto.notifyDaysBefore,
+                sendEmail = invoiceDto.sendEmail,
+                sendSMS = invoiceDto.sendSMS,
+                paidAt = invoiceDto.PaidAt.ToString("yyyy-MM-dd"),
+                createdAt = invoiceDto.CreatedAt.ToString("yyyy-MM-dd")
+            });
 
-            var response = await Http.PostAsync(
-                new Uri(new Uri(Navigation.BaseUri), "api/form/invoice"), form);
-
-            if (response.IsSuccessStatusCode)
+            if (result.Ok)
             {
-                Navigation.NavigateTo("/");
+                success = true;
                 return;
             }
 
-            errorMessage = $"Server error ({(int)response.StatusCode}): {await response.Content.ReadAsStringAsync()}";
+            errorMessage = $"Server error ({result.Status}): {result.Body}";
         } catch (Exception ex)
         {
             errorMessage = $"An error occurred: {ex.Message}";
         } finally {
             isSubmitting = false;
         }
+    }
+
+    private sealed class UploadResult
+    {
+        public bool Ok { get; set; }
+        public int Status { get; set; }
+        public string Body { get; set; } = string.Empty;
     }
 
 }
